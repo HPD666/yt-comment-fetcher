@@ -1,21 +1,19 @@
 import os
 import re
 import json
+from datetime import datetime
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Sabit parametreler
 VIDEO_ID = "Hume-QrkErs"
 MAX_CHARS = 140
 API_KEY = os.environ.get("YT_API_KEY")
 
 def sanitize_text(text, max_chars=140):
-    # Mask URLs, Emails, Phone numbers
     text = re.sub(r'https?://\S+|www\.\S+', '[link]', text)
     text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[email]', text)
     text = re.sub(r'\+?\d[\d\s-]{7,}\d', '[phone]', text)
     
-    # Kelime bölmeden kısalt
     if len(text) > max_chars:
         truncated = text[:max_chars].rsplit(' ', 1)[0]
         text = truncated + '…'
@@ -76,9 +74,12 @@ def get_latest_comment():
 
 if __name__ == "__main__":
     result = get_latest_comment()
+    
+    # Keep alive için son güncelleme zaman damgası ekleme
+    result["last_updated_utc"] = datetime.utcnow().isoformat()
+    
     json_output = json.dumps(result, indent=2, ensure_ascii=False)
     
-    # Sonucu JSON olarak kaydet
     with open("latest_comment.json", "w", encoding="utf-8") as f:
         f.write(json_output)
         
