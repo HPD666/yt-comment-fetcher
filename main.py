@@ -75,7 +75,7 @@ def get_latest_comment():
 if __name__ == "__main__":
     result = get_latest_comment()
     
-    # Keep alive için son güncelleme zaman damgası ekleme
+    # Keep alive için zaman damgası ekleme
     result["last_updated_utc"] = datetime.utcnow().isoformat()
     
     json_output = json.dumps(result, indent=2, ensure_ascii=False)
