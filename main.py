@@ -14,6 +14,9 @@ CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
 REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
 
 def get_authenticated_service():
+    if not all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
+        raise ValueError("GitHub Secrets (YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN) eksik veya okunamıyor!")
+
     creds = Credentials(
         token=None,
         refresh_token=REFRESH_TOKEN,
@@ -39,7 +42,6 @@ def contains_unsafe_content(text):
 def update_video_title_and_get_comment():
     youtube = get_authenticated_service()
 
-    # 1. En son yorumu çek
     comment_response = youtube.commentThreads().list(
         part="snippet",
         videoId=VIDEO_ID,
@@ -63,11 +65,9 @@ def update_video_title_and_get_comment():
     sanitized_text = sanitize_text(raw_text, MAX_CHARS)
     new_title = f"{author} has commented \"{sanitized_text}\""
 
-    # YouTube başlıkları maks 100 karakter olabilir
     if len(new_title) > 100:
         new_title = new_title[:97] + "..."
 
-    # 2. Videonun mevcut bilgilerini çek (Category ID ve Snippet gerekli)
     video_response = youtube.videos().list(
         part="snippet",
         id=VIDEO_ID
@@ -76,7 +76,6 @@ def update_video_title_and_get_comment():
     if video_response["items"]:
         video_snippet = video_response["items"][0]["snippet"]
         
-        # Sadece başlık değiştiyse YouTube'a istek at
         if video_snippet["title"] != new_title:
             video_snippet["title"] = new_title
             
