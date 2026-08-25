@@ -2,82 +2,103 @@ import os
 import re
 import json
 from datetime import datetime
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 VIDEO_ID = "Hume-QrkErs"
 MAX_CHARS = 140
-API_KEY = os.environ.get("YT_API_KEY")
+
+CLIENT_ID = os.environ.get("YT_CLIENT_ID")
+CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
+REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
+
+def get_authenticated_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        scopes=["https://www.googleapis.com/auth/youtube.force-ssl"]
+    )
+    return build("youtube", "v3", credentials=creds)
 
 def sanitize_text(text, max_chars=140):
     text = re.sub(r'https?://\S+|www\.\S+', '[link]', text)
     text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[email]', text)
     text = re.sub(r'\+?\d[\d\s-]{7,}\d', '[phone]', text)
-    
     if len(text) > max_chars:
-        truncated = text[:max_chars].rsplit(' ', 1)[0]
-        text = truncated + '…'
-        
+        text = text[:max_chars].rsplit(' ', 1)[0] + '…'
     return text.strip()
 
 def contains_unsafe_content(text):
-    unsafe_keywords = ['hate', 'threat', 'explicit', 'doxx'] 
+    unsafe_keywords = ['hate', 'threat', 'explicit', 'doxx']
     return any(word in text.lower() for word in unsafe_keywords)
 
-def get_latest_comment():
-    if not API_KEY:
-        return {"status": "error", "notes": "Missing YT_API_KEY environment variable."}
+def update_video_title_and_get_comment():
+    youtube = get_authenticated_service()
 
-    try:
-        youtube = build('youtube', 'v3', developerKey=API_KEY)
+    # 1. En son yorumu çek
+    comment_response = youtube.commentThreads().list(
+        part="snippet",
+        videoId=VIDEO_ID,
+        order="time",
+        textFormat="plainText",
+        maxResults=1
+    ).execute()
+
+    items = comment_response.get("items", [])
+    if not items:
+        return {"status": "empty"}
+
+    top_comment = items[0]["snippet"]["topLevelComment"]["snippet"]
+    raw_text = top_comment.get("textDisplay", "")
+    author = top_comment.get("authorDisplayName", "Someone")
+    published_at = top_comment.get("publishedAt", None)
+
+    if contains_unsafe_content(raw_text):
+        return {"status": "unsafe", "reason": "content policy"}
+
+    sanitized_text = sanitize_text(raw_text, MAX_CHARS)
+    new_title = f"{author} has commented \"{sanitized_text}\""
+
+    # YouTube başlıkları maks 100 karakter olabilir
+    if len(new_title) > 100:
+        new_title = new_title[:97] + "..."
+
+    # 2. Videonun mevcut bilgilerini çek (Category ID ve Snippet gerekli)
+    video_response = youtube.videos().list(
+        part="snippet",
+        id=VIDEO_ID
+    ).execute()
+
+    if video_response["items"]:
+        video_snippet = video_response["items"][0]["snippet"]
         
-        response = youtube.commentThreads().list(
-            part="snippet",
-            videoId=VIDEO_ID,
-            order="time",
-            textFormat="plainText",
-            maxResults=1
-        ).execute()
+        # Sadece başlık değiştiyse YouTube'a istek at
+        if video_snippet["title"] != new_title:
+            video_snippet["title"] = new_title
+            
+            youtube.videos().update(
+                part="snippet",
+                body={
+                    "id": VIDEO_ID,
+                    "snippet": video_snippet
+                }
+            ).execute()
 
-        items = response.get("items", [])
-        if not items:
-            return {"status": "empty"}
-
-        top_comment = items[0]["snippet"]["topLevelComment"]["snippet"]
-        raw_text = top_comment.get("textDisplay", "")
-        author = top_comment.get("authorDisplayName", None)
-        published_at = top_comment.get("publishedAt", None)
-
-        if contains_unsafe_content(raw_text):
-            return {"status": "unsafe", "reason": "content policy"}
-
-        sanitized_text = sanitize_text(raw_text, MAX_CHARS)
-
-        return {
-            "status": "ok",
-            "comment_text": sanitized_text,
-            "author_display": author,
-            "published_at": published_at,
-            "short_script": {
-                "title": f"Comment by {author if author else 'Anonymous'}",
-                "on_screen_text": sanitized_text,
-                "voice_line": "Here is the most recent public comment shared on this video.",
-                "caption": "Anonymized public comment from YouTube"
-            },
-            "notes": None
-        }
-
-    except HttpError as e:
-        return {"status": "error", "notes": f"YouTube API Error: {e.reason}"}
-    except Exception as e:
-        return {"status": "error", "notes": str(e)}
+    return {
+        "status": "ok",
+        "comment_text": sanitized_text,
+        "author_display": author,
+        "published_at": published_at,
+        "updated_video_title": new_title,
+        "last_updated_utc": datetime.utcnow().isoformat()
+    }
 
 if __name__ == "__main__":
-    result = get_latest_comment()
-    
-    # Keep alive için zaman damgası
-    result["last_updated_utc"] = datetime.utcnow().isoformat()
-    
+    result = update_video_title_and_get_comment()
     json_output = json.dumps(result, indent=2, ensure_ascii=False)
     
     with open("latest_comment.json", "w", encoding="utf-8") as f:
