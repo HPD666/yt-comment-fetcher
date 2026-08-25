@@ -59,7 +59,7 @@ def get_latest_comment():
             "author_display": author,
             "published_at": published_at,
             "short_script": {
-                "title": "Latest public comment",
+                "title": f"Comment by {author if author else 'Anonymous'}",
                 "on_screen_text": sanitized_text,
                 "voice_line": "Here is the most recent public comment shared on this video.",
                 "caption": "Anonymized public comment from YouTube"
@@ -75,7 +75,7 @@ def get_latest_comment():
 if __name__ == "__main__":
     result = get_latest_comment()
     
-    # Keep alive için zaman damgası ekleme
+    # Keep alive için zaman damgası
     result["last_updated_utc"] = datetime.utcnow().isoformat()
     
     json_output = json.dumps(result, indent=2, ensure_ascii=False)
