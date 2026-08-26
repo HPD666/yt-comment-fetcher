@@ -65,49 +65,78 @@ def update_video_and_get_comment():
 
     sanitized_text = sanitize_text(raw_text, MAX_CHARS)
     
-    # 2. Başlığı Açıklamaya Yönlendirecek Şekilde Ayarla
+    # 2. Video İstatistiklerini Çek (İzlenme, Beğeni, Yorum Sayısı)
+    video_response = youtube.videos().list(
+        part="snippet,statistics",
+        id=VIDEO_ID
+    ).execute()
+
+    if not video_response.get("items"):
+        return {"status": "error", "notes": "Video not found"}
+
+    video_data = video_response["items"][0]
+    video_snippet = video_data["snippet"]
+    stats = video_data.get("statistics", {})
+
+    views = stats.get("viewCount", "0")
+    likes = stats.get("likeCount", "0")
+    total_comments = stats.get("commentCount", "0")
+    channel_id = video_snippet.get("channelId")
+
+    # 3. Kanal İstatistiklerini Çek (Abone Sayısı)
+    channel_response = youtube.channels().list(
+        part="statistics",
+        id=channel_id
+    ).execute()
+
+    subscribers = "Hidden"
+    if channel_response.get("items"):
+        ch_stats = channel_response["items"][0].get("statistics", {})
+        if not ch_stats.get("hiddenSubscriberCount", False):
+            subscribers = ch_stats.get("subscriberCount", "0")
+
+    # 4. Yeni Başlık ve Açıklama Oluştur
     new_title = f"New Comment from {author}! Read Description ⬇️"
     if len(new_title) > 100:
         new_title = new_title[:97] + "..."
 
     current_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # 3. Yorum Bilgisi ve Beğeni/Abone Çağrılı Açıklama Metni
     new_description = f"""💬 LATEST PUBLIC COMMENT:
 "{sanitized_text}"
 
 — Commented by: {author}
 — Posted at: {published_at}
+
+📊 LIVE VIDEO & CHANNEL STATS:
+— Views: {views}
+— Likes: {likes}
+— Total Comments: {total_comments}
+— Channel Subscribers: {subscribers}
+
+⏱️ SYSTEM INFO:
+— Refresh Interval: Updated every 5 minutes
 — Last Synced: {current_utc}
 
 ----------------------------------------
 👍 Enjoyed this video?
-- Leave a comment below to see your name & comment featured live in the description!
+- Leave a comment below to see your name & comment featured live!
 - Don't forget to LIKE the video and SUBSCRIBE for more live interactive Shorts!
 ----------------------------------------
 """
 
-    # 4. Videonun mevcut bilgilerini al ve güncelle
-    video_response = youtube.videos().list(
-        part="snippet",
-        id=VIDEO_ID
-    ).execute()
-
-    if video_response["items"]:
-        video_snippet = video_response["items"][0]["snippet"]
+    # 5. Başlık veya Açıklama Değiştiyse Güncelle
+    if video_snippet["title"] != new_title or video_snippet["description"] != new_description:
+        video_snippet["title"] = new_title
+        video_snippet["description"] = new_description
         
-        # Eğer başlık veya açıklama değiştiyse YouTube'da güncelle
-        if video_snippet["title"] != new_title or video_snippet["description"] != new_description:
-            video_snippet["title"] = new_title
-            video_snippet["description"] = new_description
-            
-            youtube.videos().update(
-                part="snippet",
-                body={
-                    "id": VIDEO_ID,
-                    "snippet": video_snippet
-                }
-            ).execute()
+        youtube.videos().update(
+            part="snippet",
+            body={
+                "id": VIDEO_ID,
+                "snippet": video_snippet
+            }
+        ).execute()
 
     return {
         "status": "ok",
@@ -115,6 +144,10 @@ def update_video_and_get_comment():
         "author_display": author,
         "published_at": published_at,
         "updated_video_title": new_title,
+        "views": views,
+        "likes": likes,
+        "total_comments": total_comments,
+        "subscribers": subscribers,
         "last_updated_utc": current_utc
     }
 
