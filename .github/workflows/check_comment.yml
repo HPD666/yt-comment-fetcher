@@ -34,6 +34,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add latest_comment.json
-          git commit -m "Keep alive & update comment data [skip ci]" || exit 0
+          git add latest_comment.json daily_sub_cache.json
+          git commit -m "Keep alive & update comment/stats data [skip ci]" || exit 0
           git push
