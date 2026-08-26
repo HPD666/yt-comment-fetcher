@@ -117,7 +117,7 @@ def update_video_and_get_comment():
 — Today's New Subscribers: {daily_subs}
 
 ⏱️ SYSTEM INFO:
-— Refresh Interval: Updated every 5 minutes
+— Refresh Interval: Updated every 15 minutes
 — Last Synced: {current_utc}
 
 ----------------------------------------
