@@ -4,10 +4,10 @@ import json
 from datetime import datetime
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 VIDEO_ID = "Hume-QrkErs"
 MAX_CHARS = 200
+CACHE_FILE = "daily_sub_cache.json"
 
 CLIENT_ID = os.environ.get("YT_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
@@ -15,7 +15,7 @@ REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
 
 def get_authenticated_service():
     if not all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
-        raise ValueError("GitHub Secrets (YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN) missing or unreadable.")
+        raise ValueError("GitHub Secrets (YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN) missing.")
 
     creds = Credentials(
         token=None,
@@ -39,16 +39,32 @@ def contains_unsafe_content(text):
     unsafe_keywords = ['hate', 'threat', 'explicit', 'doxx']
     return any(word in text.lower() for word in unsafe_keywords)
 
+def get_daily_sub_gain(current_subs):
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    start_subs = current_subs
+
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                data = json.load(f)
+                if data.get("date") == today:
+                    start_subs = data.get("start_subs", current_subs)
+                else:
+                    start_subs = current_subs
+        except Exception:
+            start_subs = current_subs
+
+    with open(CACHE_FILE, "w") as f:
+        json.dump({"date": today, "start_subs": start_subs}, f)
+
+    gain = current_subs - start_subs
+    return f"+{gain}" if gain >= 0 else str(gain)
+
 def update_video_and_get_comment():
     youtube = get_authenticated_service()
 
-    # 1. En son yorumu çek
     comment_response = youtube.commentThreads().list(
-        part="snippet",
-        videoId=VIDEO_ID,
-        order="time",
-        textFormat="plainText",
-        maxResults=1
+        part="snippet", videoId=VIDEO_ID, order="time", textFormat="plainText", maxResults=1
     ).execute()
 
     items = comment_response.get("items", [])
@@ -64,38 +80,24 @@ def update_video_and_get_comment():
         return {"status": "unsafe", "reason": "content policy"}
 
     sanitized_text = sanitize_text(raw_text, MAX_CHARS)
-    
-    # 2. Video İstatistiklerini Çek (İzlenme, Beğeni, Yorum Sayısı)
-    video_response = youtube.videos().list(
-        part="snippet,statistics",
-        id=VIDEO_ID
-    ).execute()
 
+    video_response = youtube.videos().list(part="snippet,statistics", id=VIDEO_ID).execute()
     if not video_response.get("items"):
-        return {"status": "error", "notes": "Video not found"}
+        return {"status": "error"}
 
-    video_data = video_response["items"][0]
-    video_snippet = video_data["snippet"]
-    stats = video_data.get("statistics", {})
+    video_snippet = video_response["items"][0]["snippet"]
+    stats = video_response["items"][0].get("statistics", {})
 
     views = stats.get("viewCount", "0")
     likes = stats.get("likeCount", "0")
     total_comments = stats.get("commentCount", "0")
-    channel_id = video_snippet.get("channelId")
 
-    # 3. Kanal İstatistiklerini Çek (Abone Sayısı)
-    channel_response = youtube.channels().list(
-        part="statistics",
-        id=channel_id
-    ).execute()
-
-    subscribers = "Hidden"
+    channel_response = youtube.channels().list(part="statistics", id=video_snippet.get("channelId")).execute()
+    daily_subs = "N/A"
     if channel_response.get("items"):
-        ch_stats = channel_response["items"][0].get("statistics", {})
-        if not ch_stats.get("hiddenSubscriberCount", False):
-            subscribers = ch_stats.get("subscriberCount", "0")
+        total_subs = int(channel_response["items"][0]["statistics"].get("subscriberCount", 0))
+        daily_subs = get_daily_sub_gain(total_subs)
 
-    # 4. Yeni Başlık ve Açıklama Oluştur
     new_title = f"New Comment from {author}! Read Description ⬇️"
     if len(new_title) > 100:
         new_title = new_title[:97] + "..."
@@ -108,11 +110,11 @@ def update_video_and_get_comment():
 — Commented by: {author}
 — Posted at: {published_at}
 
-📊 LIVE VIDEO & CHANNEL STATS:
+📊 LIVE VIDEO & DAILY STATS:
 — Views: {views}
 — Likes: {likes}
 — Total Comments: {total_comments}
-— Channel Subscribers: {subscribers}
+— Today's New Subscribers: {daily_subs}
 
 ⏱️ SYSTEM INFO:
 — Refresh Interval: Updated every 5 minutes
@@ -125,37 +127,14 @@ def update_video_and_get_comment():
 ----------------------------------------
 """
 
-    # 5. Başlık veya Açıklama Değiştiyse Güncelle
     if video_snippet["title"] != new_title or video_snippet["description"] != new_description:
         video_snippet["title"] = new_title
         video_snippet["description"] = new_description
-        
-        youtube.videos().update(
-            part="snippet",
-            body={
-                "id": VIDEO_ID,
-                "snippet": video_snippet
-            }
-        ).execute()
+        youtube.videos().update(part="snippet", body={"id": VIDEO_ID, "snippet": video_snippet}).execute()
 
-    return {
-        "status": "ok",
-        "comment_text": sanitized_text,
-        "author_display": author,
-        "published_at": published_at,
-        "updated_video_title": new_title,
-        "views": views,
-        "likes": likes,
-        "total_comments": total_comments,
-        "subscribers": subscribers,
-        "last_updated_utc": current_utc
-    }
+    return {"status": "ok", "daily_subs": daily_subs}
 
 if __name__ == "__main__":
     result = update_video_and_get_comment()
-    json_output = json.dumps(result, indent=2, ensure_ascii=False)
-    
     with open("latest_comment.json", "w", encoding="utf-8") as f:
-        f.write(json_output)
-        
-    print(json_output)
+        json.dump(result, f, indent=2, ensure_ascii=False)
